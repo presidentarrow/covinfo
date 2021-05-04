@@ -73,7 +73,7 @@ Resources:
                 <h1>{0}</h1>
                 {1} 
                 <br>
-                <i>Contact galphat@ if this email is not displayed correctly.</i>
+                <i>https://github.com/presidentarrow/covinfo</i>
                 </body>
                 </html> 
                 """.format(SUBJECT,emailstr)
