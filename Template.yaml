@@ -1,0 +1,155 @@
+Parameters:
+  PIN:
+    Type: Number
+    Description: Enter PIN code
+    MinLength: 6
+    MaxLength: 6
+  EMAIL:
+    Type: String
+    Description: Enter email for notification which is verified in SES in MUMBAI region
+
+Resources:
+    GetCowinfoLambdaFunction:
+      Type: AWS::Lambda::Function
+      Properties:
+        Runtime: python3.8
+        Handler: index.lambda_handler
+        Role: !GetAtt 
+          - GetCowinfoRole
+          - Arn
+        Environment:
+          Variables:
+            PIN:
+              Ref: PIN
+            EMAIL:
+              Ref: EMAIL
+        Code:
+          ZipFile: |
+            import os
+            import json
+            import urllib.request
+            import datetime
+            import boto3
+
+            pin=os.getenv('PIN')
+            date=datetime.datetime.now().strftime("%d-%m-%Y")
+            url='https://cdn-api.co-vin.in/api/v2/appointment/sessions/public/calendarByPin?pincode='+str(pin)+'&date='+date
+
+            RECIPIENT=os.getenv('EMAIL')
+            SENDER = "getCowinfo Notification <"+RECIPIENT+">"
+            AWS_REGION = "ap-south-1"
+            SUBJECT = "Hourly Vaccine Notification"
+            BODY_TEXT = ("Amazon SES (Python)\r\n"
+                    "This email was sent with Amazon SES using the "
+                    "AWS SDK for Python (Boto)."
+                    )
+            CHARSET = "UTF-8"
+
+            def lambda_handler(event, context):
+                res = urllib.request.urlopen(urllib.request.Request(
+                    url=url,
+                    headers={'Accept': 'application/json'},
+                    method='GET'),
+                timeout=5)
+                
+                response = json.loads(res.read())
+                emailstr = 'There are total ' + str(len(response['centers'])) +' centers near '+str(pin) + '<br>'
+                for center in response['centers']:
+                    emailstr = emailstr + '<br>Center: '+center['name'] + '<br>'
+                    emailstr = emailstr + '> There are '+ str(len(center['sessions']))+ ' sessions available here<br>'  
+                    for session in center['sessions']:
+                        emailstr = emailstr + '-'*30 +'<br>'
+                        emailstr = emailstr + '>> id: '+ session['session_id'] + '<br>'
+                        emailstr = emailstr + '>> Capacity: '+ str(session['available_capacity']) + '<br>'
+                        emailstr = emailstr + '>> Vaccine: ' + session['vaccine'] + '<br>'
+                        emailstr = emailstr + '>> Slots: ' + str(session['slots']) +'<br>'
+                        emailstr = emailstr + '-'*30
+                    emailstr = emailstr + '<br>'+ '*'*30
+                print(emailstr)
+                client = boto3.client('ses',region_name=AWS_REGION)
+                BODY_HTML = """<html> 
+                <head></head>
+                <body>
+                <h1>{0}</h1>
+                {1} 
+                <br>
+                <i>Contact galphat@ if this email is not displayed correctly.</i>
+                </body>
+                </html> 
+                """.format(SUBJECT,emailstr)
+                eresponse = client.send_email(
+                            Destination={
+                                'ToAddresses': [
+                                    RECIPIENT,
+                                ],
+                            },
+                            Message={
+                                'Body': {
+                                    'Html': {
+                                        'Charset': CHARSET,
+                                        'Data': BODY_HTML,
+                                    },
+                                    'Text': {
+                                        'Charset': CHARSET,
+                                        'Data': BODY_TEXT,
+                                    },
+                                },
+                                'Subject': {
+                                    'Charset': CHARSET,
+                                    'Data': SUBJECT,
+                                },
+                            },
+                            Source=SENDER
+                        )
+    GetCowinfoRole:
+      Properties:
+        AssumeRolePolicyDocument:
+          Statement:
+            - Action:
+                - 'sts:AssumeRole'
+              Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+          Version: '2012-10-17'
+        Policies:
+          - PolicyDocument:
+              Statement:
+                - Action:
+                    - 'logs:CreateLogGroup'
+                    - 'logs:CreateLogStream'
+                    - 'logs:PutLogEvents'
+                    - 'logs:CreateLogStream'
+                    - 'logs:DescribeLogStreams'
+                  Effect: Allow
+                  Resource: '*'
+                - Action:
+                    - 'ses:SendEmail'
+                  Effect: Allow
+                  Resource: '*'
+              Version: '2012-10-17'
+            PolicyName: GetCowinfoPolicy
+      Type: 'AWS::IAM::Role'
+    ScheduledRule: 
+      Type: AWS::Events::Rule
+      Properties: 
+        Description: "ScheduledRule"
+        ScheduleExpression: "rate(60 minutes)"
+        State: "ENABLED"
+        Targets: 
+          - 
+            Arn: 
+              Fn::GetAtt: 
+                - "GetCowinfoLambdaFunction"
+                - "Arn"
+            Id: "GetCowinfoFunctionV1"
+    PermissionForEventsToInvokeLambda: 
+      Type: AWS::Lambda::Permission
+      Properties: 
+        FunctionName: !Ref "GetCowinfoLambdaFunction"
+        Action: "lambda:InvokeFunction"
+        Principal: "events.amazonaws.com"
+        SourceArn: 
+          Fn::GetAtt: 
+            - "ScheduledRule"
+            - "Arn"
